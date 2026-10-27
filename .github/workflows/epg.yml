@@ -1,0 +1,26 @@
+name: build-epg
+on:
+  schedule:
+    - cron: "20 */3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Собрать маленький файл
+        run: python filter_epg.py
+      - name: Опубликовать в ветку data
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git checkout --orphan data
+          git rm -rf --cached . -q
+          git add -f epg_small.xml.gz
+          git commit -q -m "epg $(date -u '+%Y-%m-%d %H:%M')"
+          git push -f origin data
