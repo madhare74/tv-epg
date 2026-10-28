@@ -19,10 +19,38 @@ SUFFIX = r"(\s+(fhd|uhd|hd|4k|orig|50))+$"
 def canon(s):
     k = re.sub(r"[\s.!\-–—]", "", (s or "").lower().replace("ё", "е")); return ALIAS.get(k, k)
 
-channels = []
+# Настройка «Время»: какие часы показывать в сводке.
+#   московское      — цифры московского эфира (Кинопоиск отдаёт региональную версию канала,
+#                     поэтому передача идёт в эти часы по местным часам). По умолчанию.
+#   екатеринбургское — настоящее время по Екатеринбургу для московского эфира.
+# Задаётся в list.md строкой «- Время: московское» в разделе «## Настройки».
+TIME_MODE = "московское"
+MSK = dt.timezone(dt.timedelta(hours=3))
+LOCAL = dt.timezone(dt.timedelta(hours=5))   # часовой пояс, в который переводит сервер
+
+channels, section = [], None
 for line in open("list.md", encoding="utf-8"):
-    m = re.match(r"^[-*•]\s+(.+)$", line.strip())
-    if m: channels.append(re.sub(r"\\(.)", r"\1", m.group(1)).strip())
+    s = line.strip()
+    if s.startswith("#"):
+        h = s.lstrip("#").strip().lower()
+        section = "set" if h.startswith("настройк") else ("ch" if h.startswith("канал") else section)
+        continue
+    m = re.match(r"^[-*•]\s+(.+)$", s)
+    if not m: continue
+    item = re.sub(r"\\(.)", r"\1", m.group(1)).strip()
+    st = re.match(r"(?i)^время\s*:\s*(\S+)", item)
+    if st:
+        TIME_MODE = "екатеринбургское" if st.group(1).lower().replace("ё", "е").startswith("екат") else "московское"
+    elif section != "set":
+        channels.append(item)
+print("время в сводке:", TIME_MODE)
+
+def fix_time(v):
+    """Для «московского» режима: цифры московского времени с поясом +0500,
+    чтобы сервер (переводящий в UTC+5) показал ровно московские часы."""
+    if TIME_MODE != "московское": return v
+    t = dt.datetime.strptime(v, "%Y%m%d%H%M%S %z").astimezone(MSK).replace(tzinfo=LOCAL)
+    return t.strftime("%Y%m%d%H%M%S %z")
 plus = {canon(c) for c in channels}
 nice = {canon(c): c for c in channels}   # имя канала для сообщений — как в list.md
 def base_channel(name):
@@ -69,7 +97,7 @@ for key, url in SOURCES.items():
                         cid = f"{key}:{el.get('channel')}"
                         t = el.find("title"); title = ((t.text or "").strip() if t is not None else "")
                         progs.setdefault(el.get("channel"), []).append(
-                            f"<programme start={quoteattr(el.get('start'))} stop={quoteattr(el.get('stop'))} channel={quoteattr(cid)}><title>{escape(title)}</title></programme>")
+                            f"<programme start={quoteattr(fix_time(el.get('start')))} stop={quoteattr(fix_time(el.get('stop')))} channel={quoteattr(cid)}><title>{escape(title)}</title></programme>")
                 el.clear()
     except Exception as e:
         print("ошибка чтения", key, e, file=sys.stderr)
@@ -91,6 +119,6 @@ if missing: print("нет программы для:", ", ".join(missing))
 if not out_pr or sum(n for n, _ in stats.values()) == 0:
     sys.exit("нет данных — файл не обновляем")
 with gzip.open(OUT, "wt", encoding="utf-8", compresslevel=9) as f:
-    f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv generated="%s">\n' % now.strftime("%Y-%m-%d %H:%M UTC"))
+    f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv generated="%s" time-mode=%s>\n' % (now.strftime("%Y-%m-%d %H:%M UTC"), quoteattr(TIME_MODE)))
     f.write("\n".join(out_ch + out_pr)); f.write("\n</tv>\n")
 print("готово:", OUT, os.path.getsize(OUT), "байт")
