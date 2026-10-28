@@ -19,12 +19,14 @@ SUFFIX = r"(\s+(fhd|uhd|hd|4k|orig|50))+$"
 def canon(s):
     k = re.sub(r"[\s.!\-–—]", "", (s or "").lower().replace("ё", "е")); return ALIAS.get(k, k)
 
-# Настройка «Время»: какие часы показывать в сводке.
-#   московское      — цифры московского эфира (Кинопоиск отдаёт региональную версию канала,
-#                     поэтому передача идёт в эти часы по местным часам). По умолчанию.
-#   екатеринбургское — настоящее время по Екатеринбургу для московского эфира.
-# Задаётся в list.md строкой «- Время: московское» в разделе «## Настройки».
-TIME_MODE = "московское"
+# ВРЕМЯ. Сервер переводит время в екатеринбургское — это верно для каналов, которые
+# Кинопоиск показывает в московском эфире (например, Мир, Мосфильм: «Родня» 20:20 МСК идёт в 22:20).
+# Но некоторые каналы Кинопоиск отдаёт в региональной версии (орбита «+2»): там передача идёт
+# в московские часы по местным часам (Праздники на ТНТ — 16:30 МСК и в 16:30 по Екатеринбургу).
+# Для таких каналов время записывается московскими цифрами с поясом +0500, и сервер выводит его без сдвига.
+# Список региональных каналов — ниже; можно дополнить из list.md строкой
+# «- Региональные: ТНТ; СТС» в разделе «## Настройки».
+REGIONAL = ["ТНТ"]
 MSK = dt.timezone(dt.timedelta(hours=3))
 LOCAL = dt.timezone(dt.timedelta(hours=5))   # часовой пояс, в который переводит сервер
 
@@ -38,17 +40,17 @@ for line in open("list.md", encoding="utf-8"):
     m = re.match(r"^[-*•]\s+(.+)$", s)
     if not m: continue
     item = re.sub(r"\\(.)", r"\1", m.group(1)).strip()
-    st = re.match(r"(?i)^время\s*:\s*(\S+)", item)
+    st = re.match(r"(?i)^региональн\S*\s*:\s*(.+)$", item)
     if st:
-        TIME_MODE = "екатеринбургское" if st.group(1).lower().replace("ё", "е").startswith("екат") else "московское"
+        REGIONAL += [x.strip() for x in re.split(r"[;,]", st.group(1)) if x.strip()]
     elif section != "set":
         channels.append(item)
-print("время в сводке:", TIME_MODE)
+regional = {canon(c) for c in REGIONAL}
+print("региональные каналы (время как на Кинопоиске):", ", ".join(sorted(set(REGIONAL))))
 
-def fix_time(v):
-    """Для «московского» режима: цифры московского времени с поясом +0500,
-    чтобы сервер (переводящий в UTC+5) показал ровно московские часы."""
-    if TIME_MODE != "московское": return v
+def fix_time(v, b):
+    """Региональный канал: московские цифры с поясом +0500. Остальные — без изменений."""
+    if b not in regional: return v
     t = dt.datetime.strptime(v, "%Y%m%d%H%M%S %z").astimezone(MSK).replace(tzinfo=LOCAL)
     return t.strftime("%Y%m%d%H%M%S %z")
 plus = {canon(c) for c in channels}
@@ -101,7 +103,7 @@ for key, url in SOURCES.items():
                         cid = f"{key}:{el.get('channel')}"
                         t = el.find("title"); title = ((t.text or "").strip() if t is not None else "")
                         progs.setdefault(el.get("channel"), []).append(
-                            f"<programme start={quoteattr(fix_time(el.get('start')))} stop={quoteattr(fix_time(el.get('stop')))} channel={quoteattr(cid)}><title>{escape(title)}</title></programme>")
+                            f"<programme start={quoteattr(fix_time(el.get('start'), ch[0]))} stop={quoteattr(fix_time(el.get('stop'), ch[0]))} channel={quoteattr(cid)}><title>{escape(title)}</title></programme>")
                 el.clear()
     except Exception as e:
         print("ошибка чтения", key, e, file=sys.stderr)
@@ -123,6 +125,6 @@ if missing: print("нет программы для:", ", ".join(missing))
 if not out_pr or sum(n for n, _ in stats.values()) == 0:
     sys.exit("нет данных — файл не обновляем")
 with gzip.open(OUT, "wt", encoding="utf-8", compresslevel=9) as f:
-    f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv generated="%s" time-mode=%s>\n' % (now.strftime("%Y-%m-%d %H:%M UTC"), quoteattr(TIME_MODE)))
+    f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv generated="%s">\n' % now.strftime("%Y-%m-%d %H:%M UTC"))
     f.write("\n".join(out_ch + out_pr)); f.write("\n</tv>\n")
 print("готово:", OUT, os.path.getsize(OUT), "байт")
