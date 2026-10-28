@@ -53,6 +53,10 @@ def fix_time(v):
     return t.strftime("%Y%m%d%H%M%S %z")
 plus = {canon(c) for c in channels}
 nice = {canon(c): c for c in channels}   # имя канала для сообщений — как в list.md
+BAD = r"[+-]\d|\(|\[|international|\bint\b|\bkz\b|\bkg\b|европа"   # так бот отсеивает «чужие» варианты каналов
+def show_name(b, original):
+    n = nice[b]
+    return n if not re.search(BAD, n.lower()) else original   # «ТВ-3» бот принял бы за сдвиг «-3»
 def base_channel(name):
     n = (name or "").lower()
     if re.search(r"[+-]\d|\(|\[|international|\bint\b|\bkz\b|\bkg\b|европа", n): return None
@@ -86,7 +90,7 @@ for key, url in SOURCES.items():
                 for dn in el.findall("display-name"):
                     b = base_channel(dn.text)
                     if b and b not in taken:
-                        chans[el.get("id")] = (b, nice[b]); break
+                        chans[el.get("id")] = (b, show_name(b, dn.text.strip())); break
                 el.clear()
             elif el.tag == "programme":
                 ch = chans.get(el.get("channel"))
